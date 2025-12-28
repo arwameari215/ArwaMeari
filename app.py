@@ -214,7 +214,7 @@ def clean_amount(value):
         )
     except ValueError:
         return ""
-
+""" test """
 if __name__ == "__main__":
     import uvicorn
     db_util.init_db()
