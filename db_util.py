@@ -1,7 +1,5 @@
 import sqlite3
 from contextlib import contextmanager
-import app
-
 
 DB_PATH = "invoices.db"
 
@@ -124,11 +122,11 @@ def get_invoices_by_vendor(vendor_name):
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("select InvoiceId from invoices where VendorName = ?",(vendor_name,))
-    rows= cursor.fetchall()
+        rows= cursor.fetchall()
     invoices = []
     for r in rows:
         invoice_id = r[0]
-    invoices.append(getInvoiceById(invoice_id))
+        invoices.append(getInvoiceById(invoice_id))
 
     return invoices
 

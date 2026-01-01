@@ -9,10 +9,8 @@ from datetime import datetime, timezone
 import time
 
 app = FastAPI()
-
 # Load OCI config from ~/.oci/config
 config = oci.config.from_file()
-
 doc_client = oci.ai_document.AIServiceDocumentClient(config)
 
 """
@@ -24,8 +22,6 @@ doc_client = oci.ai_document.AIServiceDocumentClient(config)
     Returns:
         dict: A JSON response containing the extracted data or processing result.
 """
-
-
 @app.post("/extract")
 async def extract(file: UploadFile = File(...)):
   
@@ -44,14 +40,11 @@ async def extract(file: UploadFile = File(...)):
     #Processes an uploaded PDF by encoding it to Base64 and submitting it to
     #OCI AI Document for key-value extraction and document classification.
     pdf_bytes = await file.read()
-
     # Base64 encode PDF
     encoded_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
-
     document = oci.ai_document.models.InlineDocumentDetails(
         data=encoded_pdf
     )
-    
     request = oci.ai_document.models.AnalyzeDocumentDetails(
         document=document,
         features=[
@@ -63,9 +56,14 @@ async def extract(file: UploadFile = File(...)):
             )
         ]
     )
-    start_time = time.time()
     try:
+        start_time = time.time()   # זמן התחלה
         response = doc_client.analyze_document(request)
+        end_time = time.time()     # זמן סיום
+        prediction_time = end_time - start_time
+        print(f"Time taken: {prediction_time:.2f} seconds")
+
+
     except Exception as e:
         raise HTTPException(
             status_code=503,
@@ -73,8 +71,7 @@ async def extract(file: UploadFile = File(...)):
                 "error": "The service is currently unavailable. Please try again later."
             }
         )
-    end_time = time.time()
-    prediction_time = end_time - start_time
+    
     ###############################################START MY CODE######################################################
 
     data={}  # Stores the final extracted data returned by the OCI service 
@@ -95,7 +92,7 @@ async def extract(file: UploadFile = File(...)):
                 if field_key == "InvoiceDate":
                     field_value = format_date_to_iso(field_value)
                 if field_key in ("InvoiceTotal", "SubTotal", "ShippingCost", "Amount", "UnitPrice","AmountDue"):
-                    field_value = clean_amount(field_value)
+                    field_value = clean_amount(field_key,field_value)
                 # Extract the confidence score for the field label,
                 # or default to 0.0 if confidence is not available
                 field_confidence = myfield.field_label.confidence if myfield.field_label and myfield.field_label.confidence is not None else 0.0
@@ -114,7 +111,7 @@ async def extract(file: UploadFile = File(...)):
                             # Extract the field value text if available, otherwise use an empty string
                             item_value = j.field_value.text if j.field_value and j.field_value.text else ""
                             if item_key in ("Quantity", "UnitPrice", "Amount"):
-                                item_value = clean_amount(item_value)
+                                item_value = clean_amount(item_key,item_value)
                             # Store the extracted key-value pair in the current item dictionary
                             item[item_key]=item_value
                         # Append the completed item to the list of all extracted items
@@ -142,7 +139,7 @@ async def extract(file: UploadFile = File(...)):
         "confidence": confid,
         "data": data,
         "dataConfidence": data_Confidence,
-        "predictionTime": prediction_time
+        "predictionTime": prediction_time  # add the prediction time to the response
     }   
     # Save the extracted invoice data and confidence information to the database    
     db_util.save_inv_extraction(result)
@@ -198,29 +195,50 @@ def getInvoiceByVendorName(vendor_name):
     Converts a date string to ISO 8601 format with UTC timezone.
     Returns empty string if conversion fails.
 """
+from datetime import datetime, timezone
+
 def format_date_to_iso(date_text):
     if not date_text:
         return ""
-    try:
-        dt = datetime.strptime(date_text.strip(), "%b %d %Y")
-        return  dt.replace(tzinfo=timezone.utc).isoformat()
 
+    date_text = str(date_text).strip()
+
+    # 1) If already ISO with timezone (e.g. 2012-03-06T00:00:00+00:00 or ...Z)
+    if "T" in date_text and (date_text.endswith("Z") or "+" in date_text or "-" in date_text[19:]):
+        try:
+            dt = datetime.fromisoformat(date_text.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.isoformat()
+        except ValueError:
+            pass
+
+    # 2) OCR format: "March 6, 2012"
+    try:
+        dt = datetime.strptime(date_text, "%B %d, %Y")
+        return dt.replace(tzinfo=timezone.utc).isoformat()
     except ValueError:
         return ""
+
 """
     Removes currency symbols and formatting from amount strings.
     Returns float or empty string if invalid.
 """  
-def clean_amount(value):
+def clean_amount(key,value):
+
     if not value:
         return ""
     try:
+        if key == "Quantity":
+            return int(
+            value.replace("$", "").replace(",", "").strip()
+        )
         return float(
             value.replace("$", "").replace(",", "").strip()
         )
     except ValueError:
         return ""
-""" test """
+
 if __name__ == "__main__":
     import uvicorn
     db_util.init_db()
